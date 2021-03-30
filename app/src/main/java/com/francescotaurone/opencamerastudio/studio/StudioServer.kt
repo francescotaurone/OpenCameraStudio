@@ -1,6 +1,8 @@
 package com.francescotaurone.opencamerastudio.studio
 
 import android.content.Intent
+import android.media.MediaMetadataRetriever
+import android.net.Uri
 import android.util.Log
 import android.support.v4.content.LocalBroadcastManager
 import com.francescotaurone.opencamerastudio.MainActivity
@@ -16,7 +18,7 @@ import com.github.hiteshsondhi88.libffmpeg.LoadBinaryResponseHandler
 import com.github.hiteshsondhi88.libffmpeg.FFmpeg
 import com.github.hiteshsondhi88.libffmpeg.exceptions.FFmpegCommandAlreadyRunningException
 import com.github.hiteshsondhi88.libffmpeg.ExecuteBinaryResponseHandler
-
+import kotlinx.coroutines.*
 
 class StudioServer(val mainActivity: MainActivity, val port : Int) : NanoHTTPD(port) {
     override fun serve(session: IHTTPSession): Response {
@@ -54,6 +56,21 @@ class StudioServer(val mainActivity: MainActivity, val port : Int) : NanoHTTPD(p
                 if ((listStartFrom != null) && (filename != null)) {
 
                     val startFrom = listStartFrom[0].toString()
+                    val retriever = MediaMetadataRetriever();
+
+                    retriever.setDataSource(mainActivity, Uri.fromFile(File("/storage/emulated/0/DCIM/OpenCamera/" + filename[0].toString())))
+                    val time = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    retriever.release()
+                    val videoTimeInMillisec = java.lang.Long.parseLong(time)
+                    var requestedTimeInMillisec = -java.lang.Long.parseLong(startFrom) * 1000
+                    if (requestedTimeInMillisec < 0){
+                        requestedTimeInMillisec = -requestedTimeInMillisec
+                    }
+                    if (requestedTimeInMillisec > videoTimeInMillisec){
+                        return downloadVideo(filename[0])
+                    }
+
+
 
                     //val f = File("/storage/emulated/0/DCIM/OpenCamera/" + filename[0].toString())
                     try {
@@ -73,8 +90,13 @@ class StudioServer(val mainActivity: MainActivity, val port : Int) : NanoHTTPD(p
 
                             override fun onFinish() {Log.e("gc", "onFinish command");finishedFFmpeg = true}
                         })
-                        while(!finishedFFmpeg){
-                            ;
+                        var counter = 0
+                        while(!finishedFFmpeg && counter < 10000) {
+                            print("Waiting for ffmpeg to finish")
+                        }
+                        if (counter >= 10000){
+                            Log.e("timeout", "ffmpeg timeout, proceding")
+                            return getNotFoundResponse()
                         }
                         return downloadVideo("TRIM" + filename[0])
                     } catch (e: FFmpegCommandAlreadyRunningException) {
@@ -184,7 +206,8 @@ class StudioServer(val mainActivity: MainActivity, val port : Int) : NanoHTTPD(p
 
 
     fun deleteVideo(name: String): Response {
-        val storageDir = File(mainActivity.storageUtils.saveLocation)
+        val storageDirOriginal = File(mainActivity.storageUtils.saveLocation)
+        val storageDir = File("/storage/emulated/0/DCIM/OpenCamera/")
         val targetFile = File(storageDir, name)
         val res = targetFile.delete()
         return if (res) {
